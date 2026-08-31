@@ -1,0 +1,681 @@
+# spec/corpus/parser.yml
+
+# ==============================================================================
+# GROUND STATE & BASIC CHARACTERS
+# ==============================================================================
+
+- name: "Standard text and execution"
+  input: "AB\n"
+  expected:
+    - ["print", 65]
+    - ["print", 66]
+    - ["execute", 10]
+
+- name: "C0 control characters trigger execute in ground state"
+  input: "\u0000\u0007\u0008\u0009\u000A\u000B\u000C\u000D"
+  expected:
+    - ["execute", 0]
+    - ["execute", 7]
+    - ["execute", 8]
+    - ["execute", 9]
+    - ["execute", 10]
+    - ["execute", 11]
+    - ["execute", 12]
+    - ["execute", 13]
+
+- name: "C1 control characters (8-bit) are treated as printable text"
+  input: "\u0080\u0090\u009B\u009F"
+  expected:
+    - ["print", 128]
+    - ["print", 144]
+    - ["print", 155]
+    - ["print", 159]
+
+- name: "DEL (0x7F) is ignored in ground state"
+  input: "A\u007FB"
+  expected:
+    - ["print", 65]
+    - ["print", 127]
+    - ["print", 66]
+
+# ==============================================================================
+# ESCAPE (ESC) STATE
+# ==============================================================================
+
+- name: "Simple ESC dispatch (e.g. RIS)"
+  input: "\u001bc"
+  expected:
+    - ["clear"]
+    - ["esc_dispatch", 99, [], false]
+
+- name: "ESC dispatch with intermediate (e.g. Designate G0 Character Set)"
+  input: "\u001b(B"
+  expected:
+    - ["clear"]
+    - ["collect", 40]
+    - ["esc_dispatch", 66, [40], false]
+
+- name: "ESC dispatch with multiple intermediates"
+  input: "\u001b!\"#0"
+  expected:
+    - ["clear"]
+    - ["collect", 33]
+    - ["collect", 34]
+    - ["collect", 35]
+    - ["esc_dispatch", 48, [33, 34, 35], false]
+
+- name: "DEL (0x7F) is ignored during ESC state"
+  input: "\u001b\u007fc"
+  expected:
+    - ["clear"]
+    - ["esc_dispatch", 99, [], false]
+
+- name: "C0 controls execute without interrupting ESC state"
+  input: "\u001b\u0007c"
+  expected:
+    - ["clear"]
+    - ["execute", 7]
+    - ["esc_dispatch", 99, [], false]
+
+# ==============================================================================
+# CSI STATE
+# ==============================================================================
+
+- name: "Simple CSI with no parameters"
+  input: "\u001b[m"
+  expected:
+    - ["clear"]
+    - ["csi_dispatch", 109, [], [], false]
+
+- name: "Simple CSI (SGR color change)"
+  input: "\u001b[31m"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["param", 49]
+    - ["csi_dispatch", 109, [[31, false]], [], false]
+
+- name: "CSI with multiple parameters"
+  input: "\u001b[38;5;255m"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 53]
+    - ["param", 53]
+    - ["csi_dispatch", 109, [[38, false], [5, false], [255, false]], [], false]
+
+- name: "CSI with sub-parameters"
+  input: "\u001b[38:2:255:0:100m"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["param", 56]
+    - ["param", 58]
+    - ["param", 50]
+    - ["param", 58]
+    - ["param", 50]
+    - ["param", 53]
+    - ["param", 53]
+    - ["param", 58]
+    - ["param", 48]
+    - ["param", 58]
+    - ["param", 49]
+    - ["param", 48]
+    - ["param", 48]
+    - ["csi_dispatch", 109, [[38, false], [2, true], [255, true], [0, true], [100, true]], [], false]
+
+- name: "CSI with omitted parameters sets value to -1"
+  input: "\u001b[;1;;m"
+  expected:
+    - ["clear"]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 59]
+    - ["csi_dispatch", 109, [[-1, false], [1, false], [-1, false], [-1, false]], [], false]
+
+- name: "CSI with implicit trailing parameter"
+  input: "\u001b[1;m"
+  expected:
+    - ["clear"]
+    - ["param", 49]
+    - ["param", 59]
+    - ["csi_dispatch", 109, [[1, false], [-1, false]], [], false]
+
+- name: "CSI with leading and trailing sub-parameters"
+  input: "\u001b[:1:m"
+  expected:
+    - ["clear"]
+    - ["param", 58]
+    - ["param", 49]
+    - ["param", 58]
+    - ["csi_dispatch", 109, [[-1, false], [1, true], [-1, true]], [], false]
+
+- name: "CSI with intermediate characters"
+  input: "\u001b[?25h"
+  expected:
+    - ["clear"]
+    - ["collect", 63]
+    - ["param", 50]
+    - ["param", 53]
+    - ["csi_dispatch", 104, [[25, false]], [63], false]
+
+- name: "CSI with multiple intermediate characters"
+  input: "\u001b[?25+!h"
+  expected:
+    - ["clear"]
+    - ["collect", 63]
+    - ["param", 50]
+    - ["param", 53]
+    - ["collect", 43]
+    - ["collect", 33]
+    - ["csi_dispatch", 104, [[25, false]], [63, 43, 33], false]
+
+- name: "CSI parameter integer overflow clamped to Int32::MAX"
+  input: "\u001b[9999999999999m"
+  expected:
+    - ["clear"]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["param", 57]
+    - ["csi_dispatch", 109, [[2147483647, false]], [], false]
+
+- name: "CSI sequence drops invalid transition characters and enters ignored state"
+  input: "\u001b[1<m"
+  expected:
+    - ["clear"]
+    - ["param", 49]
+
+- name: "Interrupt CSI with C0 control (BEL) executes and continues"
+  input: "\u001b[3\u00071m"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["execute", 7]
+    - ["param", 49]
+    - ["csi_dispatch", 109, [[31, false]], [], false]
+
+- name: "DEL characters are ignored in CSI"
+  input: "\u001b[3\u007f1m"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["param", 49]
+    - ["csi_dispatch", 109, [[31, false]], [], false]
+
+- name: "Exceeding maximum parameter count (64) sets ignore flag"
+  input: "\u001b[1;2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31;32;33;34;35;36;37;38;39;40;41;42;43;44;45;46;47;48;49;50;51;52;53;54;55;56;57;58;59;60;61;62;63;64;65m"
+  expected:
+    - ["clear"]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 59]
+    - ["param", 55]
+    - ["param", 59]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 57]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 48]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 54]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 55]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 49]
+    - ["param", 57]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 48]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 54]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 55]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 50]
+    - ["param", 57]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 48]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 54]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 55]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 51]
+    - ["param", 57]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 48]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 54]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 55]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 52]
+    - ["param", 57]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 48]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 53]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 54]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 55]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 56]
+    - ["param", 59]
+    - ["param", 53]
+    - ["param", 57]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 48]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 50]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 51]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 52]
+    - ["param", 59]
+    - ["param", 54]
+    - ["param", 53]
+    - ["csi_dispatch", 109, [[1, false], [2, false], [3, false], [4, false], [5, false], [6, false], [7, false], [8, false], [9, false], [10, false], [11, false], [12, false], [13, false], [14, false], [15, false], [16, false], [17, false], [18, false], [19, false], [20, false], [21, false], [22, false], [23, false], [24, false], [25, false], [26, false], [27, false], [28, false], [29, false], [30, false], [31, false], [32, false], [33, false], [34, false], [35, false], [36, false], [37, false], [38, false], [39, false], [40, false], [41, false], [42, false], [43, false], [44, false], [45, false], [46, false], [47, false], [48, false], [49, false], [50, false], [51, false], [52, false], [53, false], [54, false], [55, false], [56, false], [57, false], [58, false], [59, false], [60, false], [61, false], [62, false], [63, false], [64, false]], [], true]
+
+- name: "Exceeding maximum intermediates count (8) sets ignore flag"
+  input: "\u001b[!!!!!!!!!m"
+  expected:
+    - ["clear"]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["collect", 33]
+    - ["csi_dispatch", 109, [], [33, 33, 33, 33, 33, 33, 33, 33], true]
+
+# ==============================================================================
+# DCS STATE
+# ==============================================================================
+
+- name: "DCS string pass-through with no parameters"
+  input: "\u001bPqData\u001b\\"
+  expected:
+    - ["clear"]
+    - ["hook", 113, [], [], false]
+    - ["put", 68]
+    - ["put", 97]
+    - ["put", 116]
+    - ["put", 97]
+    - ["unhook"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "DCS string pass-through with parameters"
+  input: "\u001bP1;2qData\u001b\\"
+  expected:
+    - ["clear"]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 50]
+    - ["hook", 113, [[1, false], [2, false]], [], false]
+    - ["put", 68]
+    - ["put", 97]
+    - ["put", 116]
+    - ["put", 97]
+    - ["unhook"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "DCS entry with invalid parameter characters enters ignored state"
+  input: "\u001bP1<qData\u001b\\"
+  expected:
+    - ["clear"]
+    - ["param", 49]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "DEL (0x7F) is ignored during DCS pass-through"
+  input: "\u001bPqD\u007fa\u001b\\"
+  expected:
+    - ["clear"]
+    - ["hook", 113, [], [], false]
+    - ["put", 68]
+    - ["put", 97]
+    - ["unhook"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "C0 controls are put during DCS pass-through"
+  input: "\u001bPqD\u0007a\u001b\\"
+  expected:
+    - ["clear"]
+    - ["hook", 113, [], [], false]
+    - ["put", 68]
+    - ["put", 7]
+    - ["put", 97]
+    - ["unhook"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "C0 controls are ignored during DCS parameter parsing"
+  input: "\u001bP1\u0007;2qA\u001b\\"
+  expected:
+    - ["clear"]
+    - ["param", 49]
+    - ["param", 59]
+    - ["param", 50]
+    - ["hook", 113, [[1, false], [2, false]], [], false]
+    - ["put", 65]
+    - ["unhook"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+# ==============================================================================
+# OSC STATE
+# ==============================================================================
+
+- name: "OSC string terminated by BEL"
+  input: "\u001b]0;Title\u0007"
+  expected:
+    - ["clear"]
+    - ["osc_start"]
+    - ["osc_put", 48]
+    - ["osc_put", 59]
+    - ["osc_put", 84]
+    - ["osc_put", 105]
+    - ["osc_put", 116]
+    - ["osc_put", 108]
+    - ["osc_put", 101]
+    - ["osc_end"]
+
+- name: "OSC string terminated by ST (ESC \\)"
+  input: "\u001b]0;Title\u001b\\"
+  expected:
+    - ["clear"]
+    - ["osc_start"]
+    - ["osc_put", 48]
+    - ["osc_put", 59]
+    - ["osc_put", 84]
+    - ["osc_put", 105]
+    - ["osc_put", 116]
+    - ["osc_put", 108]
+    - ["osc_put", 101]
+    - ["osc_end"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "C0 controls (except BEL) are ignored during OSC"
+  input: "\u001b]0;T\u0009itle\u0007"
+  expected:
+    - ["clear"]
+    - ["osc_start"]
+    - ["osc_put", 48]
+    - ["osc_put", 59]
+    - ["osc_put", 84]
+    - ["osc_put", 105]
+    - ["osc_put", 116]
+    - ["osc_put", 108]
+    - ["osc_put", 101]
+    - ["osc_end"]
+
+- name: "DEL (0x7F) is put during OSC"
+  input: "\u001b]0;T\u007fitle\u0007"
+  expected:
+    - ["clear"]
+    - ["osc_start"]
+    - ["osc_put", 48]
+    - ["osc_put", 59]
+    - ["osc_put", 84]
+    - ["osc_put", 127]
+    - ["osc_put", 105]
+    - ["osc_put", 116]
+    - ["osc_put", 108]
+    - ["osc_put", 101]
+    - ["osc_end"]
+
+# ==============================================================================
+# SOS / PM / APC STATES
+# ==============================================================================
+
+- name: "SOS string pass-through terminated by ST"
+  input: "\u001bXtest\u001b\\"
+  expected:
+    - ["clear"]
+    - ["sos_start"]
+    - ["sos_put", 116]
+    - ["sos_put", 101]
+    - ["sos_put", 115]
+    - ["sos_put", 116]
+    - ["sos_end"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "PM string pass-through terminated by ST"
+  input: "\u001b^test\u001b\\"
+  expected:
+    - ["clear"]
+    - ["pm_start"]
+    - ["pm_put", 116]
+    - ["pm_put", 101]
+    - ["pm_put", 115]
+    - ["pm_put", 116]
+    - ["pm_end"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+- name: "APC string pass-through terminated by ST"
+  input: "\u001b_test\u001b\\"
+  expected:
+    - ["clear"]
+    - ["apc_start"]
+    - ["apc_put", 116]
+    - ["apc_put", 101]
+    - ["apc_put", 115]
+    - ["apc_put", 116]
+    - ["apc_end"]
+    - ["clear"]
+    - ["esc_dispatch", 92, [], false]
+
+# ==============================================================================
+# GLOBAL INTERRUPTS (CAN, SUB, ESC)
+# ==============================================================================
+
+- name: "Interrupt CSI with CAN aborts and returns to ground"
+  input: "\u001b[3\u0018"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["execute", 24]
+
+- name: "Interrupt CSI with SUB aborts and returns to ground"
+  input: "\u001b[3\u001a"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["execute", 26]
+
+- name: "Interrupt DCS with CAN unhooks early and returns to ground"
+  input: "\u001bPqDat\u0018"
+  expected:
+    - ["clear"]
+    - ["hook", 113, [], [], false]
+    - ["put", 68]
+    - ["put", 97]
+    - ["put", 116]
+    - ["unhook"]
+    - ["execute", 24]
+
+- name: "Interrupt OSC with CAN ends string early and returns to ground"
+  input: "\u001b]0;Tit\u0018"
+  expected:
+    - ["clear"]
+    - ["osc_start"]
+    - ["osc_put", 48]
+    - ["osc_put", 59]
+    - ["osc_put", 84]
+    - ["osc_put", 105]
+    - ["osc_put", 116]
+    - ["osc_end"]
+    - ["execute", 24]
+
+- name: "ESC interrupts ESC and resets state machine"
+  input: "\u001b\u001b[m"
+  expected:
+    - ["clear"]
+    - ["clear"]
+    - ["csi_dispatch", 109, [], [], false]
+
+- name: "ESC interrupts CSI and resets state machine"
+  input: "\u001b[31\u001b[m"
+  expected:
+    - ["clear"]
+    - ["param", 51]
+    - ["param", 49]
+    - ["clear"]
+    - ["csi_dispatch", 109, [], [], false]
+
+- name: "ESC interrupts OSC, triggers osc_end, and starts new ESC sequence"
+  input: "\u001b]0;Tit\u001b[m"
+  expected:
+    - ["clear"]
+    - ["osc_start"]
+    - ["osc_put", 48]
+    - ["osc_put", 59]
+    - ["osc_put", 84]
+    - ["osc_put", 105]
+    - ["osc_put", 116]
+    - ["osc_end"]
+    - ["clear"]
+    - ["csi_dispatch", 109, [], [], false]
+
