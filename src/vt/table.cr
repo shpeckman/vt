@@ -1,8 +1,8 @@
 # src/vt/table.cr
 require "./types"
 
-module VT::Internal
-  private def self.set_trans(table : Array(Array(UInt8)), state : VT::St, range : Int32 | Range(Int32, Int32), action : VT::Act, next_state : VT::St)
+private module VT::Internal
+  private def self.set_trans(table : Array(Array(UInt8)), state : St, range : Int32 | Range(Int32, Int32), action : Act, next_state : St)
     st     = state.value.to_i
     packed = (action.value.to_u8 << 4) | next_state.value.to_u8
     if range.is_a?(Int32)
@@ -12,24 +12,24 @@ module VT::Internal
     end
   end
 
-  private def self.set_anywhere(table : Array(Array(UInt8)), range : Int32 | Range(Int32, Int32), action : VT::Act, next_state : VT::St)
+  private def self.set_anywhere(table : Array(Array(UInt8)), range : Int32 | Range(Int32, Int32), action : Act, next_state : St)
     16.times do |s|
-      set_trans(table, VT::St.new(s.to_u8), range, action, next_state)
+      set_trans(table, St.new(s.to_u8), range, action, next_state)
     end
   end
 
   macro build_transitions(table, config)
     {% for row in config %}
-      set_trans({{table}}, VT::St::{{row[0].id}}, {{row[1]}}, VT::Act::{{row[2].id}}, VT::St::{{row[3].id}})
+      set_trans({{table}}, St::{{row[0].id}}, {{row[1]}}, Act::{{row[2].id}}, St::{{row[3].id}})
     {% end %}
   end
 
   private def self.build_table
     temp_table = Array(Array(UInt8)).new(16) { Array(UInt8).new(256, 0_u8) }
 
-    set_anywhere(temp_table, 0x18, VT::Act::Exec, VT::St::Gnd)
-    set_anywhere(temp_table, 0x1A, VT::Act::Exec, VT::St::Gnd)
-    set_anywhere(temp_table, 0x1B, VT::Act::Clr, VT::St::Esc)
+    set_anywhere(temp_table, 0x18, Act::Exec, St::Gnd)
+    set_anywhere(temp_table, 0x1A, Act::Exec, St::Gnd)
+    set_anywhere(temp_table, 0x1B, Act::Clr, St::Esc)
 
     build_transitions(temp_table, {
       {Gnd,     0x00..0x17, Exec,    Gnd},

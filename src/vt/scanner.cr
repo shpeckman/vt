@@ -2,10 +2,10 @@
 # A zero-allocation utility for extracting semicolon-delimited arguments
 # from string payloads.
 struct VT::Scanner
-  SEPARATOR = 0x3B_u8
-  MINUS     = 0x2D_u8
-  ZERO      = 0x30_u8
-  NINE      = 0x39_u8
+  private SEPARATOR = 0x3B_u8
+  private MINUS     = 0x2D_u8
+  private ZERO      = 0x30_u8
+  private NINE      = 0x39_u8
 
   # Returns true if the scanner is in a valid state and parsing can continue.
   getter? valid : Bool = true

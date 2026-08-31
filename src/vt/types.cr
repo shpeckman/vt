@@ -1,6 +1,6 @@
 # src/vt/types.cr
 module VT
-  enum St : UInt8
+  private enum St : UInt8
     Gnd     = 0
     Esc
     EscInt
@@ -19,7 +19,7 @@ module VT
     ApcStr
   end
 
-  enum Act : UInt8
+  private enum Act : UInt8
     None    = 0
     Ign
     Prn
